@@ -6,7 +6,6 @@
         public string TargetHost { get; protected set; }
         public int TargetPort { get; protected set; }
 
-        public abstract Task ConnectAsync(CancellationToken cancellationToken);
         public abstract ValueTask DisposeAsync();
     }
 }

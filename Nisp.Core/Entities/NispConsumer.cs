@@ -10,6 +10,7 @@ namespace Nisp.Core.Entities
         private TcpListener? _listener;
         private TcpClient? _client;
         private NetworkStream? _stream;
+        private readonly byte[] _header = new byte[4];
 
         public NispConsumer(string host, int port)
         {
@@ -17,14 +18,16 @@ namespace Nisp.Core.Entities
             TargetPort = port;
         }
 
-        internal NispConsumer(NispEndpoint endpoint) : this(endpoint.Host, endpoint.Port) { }
+        public NispConsumer(Endpoint endpoint) : this(endpoint.Host, endpoint.Port)
+        {
+        }
 
-        public override bool IsConnected => 
-            _listener != null && 
-            _client?.Connected == true && 
+        public override bool IsConnected =>
+            _listener != null &&
+            _client?.Connected == true &&
             _stream?.Socket.Connected == true;
 
-        public override async Task ConnectAsync(CancellationToken cancellationToken = default)
+        public async Task ListenAsync(CancellationToken cancellationToken = default)
         {
             if (IsConnected)
                 throw new InvalidOperationException($"Already connected to {TargetHost}:{TargetPort}");
@@ -48,23 +51,33 @@ namespace Nisp.Core.Entities
             if (!IsConnected)
                 throw new InvalidOperationException("Not connected");
 
-            var header = new byte[4];
-            await _stream.ReadExactlyAsync(header, cancellationToken).ConfigureAwait(false);
-            int messageSize = BinaryPrimitives.ReadInt32LittleEndian(header);
+            try
+            {
+                await _stream.ReadExactlyAsync(_header, cancellationToken).ConfigureAwait(false);
+                int messageSize = BinaryPrimitives.ReadInt32LittleEndian(_header);
 
-            byte[] payload = new byte[messageSize];
-            await _stream.ReadExactlyAsync(payload, cancellationToken).ConfigureAwait(false);
+                byte[] payload = new byte[messageSize];
+                await _stream.ReadExactlyAsync(payload, cancellationToken).ConfigureAwait(false);
 
-            return MemoryPackSerializer.Deserialize<TMessage>(payload);
+                return MemoryPackSerializer.Deserialize<TMessage>(payload);
+            }
+            catch (Exception ex) when (ex is MemoryPackSerializationException || ex is EndOfStreamException)
+            {
+                return default;
+            }
+            finally
+            {
+                Array.Clear(_header, 0, _header.Length);
+            }
         }
 
         public override async ValueTask DisposeAsync()
         {
-            if (_listener != null)
+            if (_stream != null)
             {
-                _listener.Stop();
-                _listener.Dispose();
-                _listener = null;
+                _stream.Close();
+                await _stream.DisposeAsync().ConfigureAwait(false);
+                _stream = null;
             }
 
             if (_client != null)
@@ -74,11 +87,11 @@ namespace Nisp.Core.Entities
                 _client = null;
             }
 
-            if (_stream != null)
+            if (_listener != null)
             {
-                _stream.Close();
-                await _stream.DisposeAsync().ConfigureAwait(false);
-                _stream = null;
+                _listener.Stop();
+                _listener.Dispose();
+                _listener = null;
             }
 
             GC.SuppressFinalize(this);

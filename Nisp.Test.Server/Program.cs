@@ -1,5 +1,6 @@
 ﻿using MemoryPack;
-using Nisp.Core.Entities;
+using Nisp.Core;
+using ZLogger;
 
 namespace Nisp.Test.Server
 {
@@ -7,21 +8,29 @@ namespace Nisp.Test.Server
     {
         static async Task Main(string[] args)
         {
-            var server = new NispConsumer("localhost", 8888);
-            await server.ConnectAsync(CancellationToken.None);
-            Console.WriteLine("Server listening.");
+            const string host = "localhost";
+            const int port = 7777;
 
-            while (true)
+            var service = new NispService();
+
+            await service.StartListenerAsync(host, port);
+
+            await foreach (var message in service.ReceiveAsync<UserMessage>(host, port))
             {
-                var message = await server.ReceiveAsync<UserMessage>(CancellationToken.None);
-                Console.WriteLine($"Received: {message.Message}");
+                Console.WriteLine(message.Message);
             }
+
+            await service.StopListenerAsync(host, port);
         }
     }
 
     [MemoryPackable]
     public partial class UserMessage
     {
+        public int Id { get; set; }
         public string Message { get; set; }
+        public byte[] MessageBytes { get; set; }
+        public DateTime Time { get; set; }
+        public int RandomNumber { get; set; }
     }
 }

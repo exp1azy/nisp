@@ -15,11 +15,13 @@ namespace Nisp.Core.Entities
             TargetPort = port;
         }
 
-        internal NispProducer(NispEndpoint endpoint) : this(endpoint.Host, endpoint.Port) { }
+        public NispProducer(Endpoint endpoint) : this(endpoint.Host, endpoint.Port)
+        {
+        }
 
         public override bool IsConnected => _client?.Connected == true && _stream?.Socket.Connected == true;
 
-        public override async Task ConnectAsync(CancellationToken cancellationToken = default)
+        public async Task ConnectAsync(int sendTimeout = 30000, CancellationToken cancellationToken = default)
         {
             if (IsConnected)
                 throw new InvalidOperationException($"Already connected to {TargetHost}:{TargetPort}");
@@ -27,7 +29,10 @@ namespace Nisp.Core.Entities
             var addresses = await Dns.GetHostAddressesAsync(TargetHost, cancellationToken).ConfigureAwait(false);
             var endpoint = new IPEndPoint(addresses[0], TargetPort);
 
-            _client = new TcpClient();
+            _client = new TcpClient
+            {
+                SendTimeout = sendTimeout
+            };
 
             _client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.NoDelay, true);
             _client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
@@ -53,18 +58,18 @@ namespace Nisp.Core.Entities
 
         public override async ValueTask DisposeAsync()
         {
-            if (_client != null)
-            {
-                _client.Close();
-                _client.Dispose();
-                _client = null;
-            }
-
             if (_stream != null)
             {
                 _stream.Close();
                 await _stream.DisposeAsync().ConfigureAwait(false);
                 _stream = null;
+            }
+
+            if (_client != null)
+            {
+                _client.Close();
+                _client.Dispose();
+                _client = null;
             }
 
             GC.SuppressFinalize(this);
