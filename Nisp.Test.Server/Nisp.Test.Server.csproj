@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Nisp.Core\Nisp.Core.csproj" />
+    <ProjectReference Include="..\Nisp.Test.Shared\Nisp.Test.Shared.csproj" />
   </ItemGroup>
 
 </Project>

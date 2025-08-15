@@ -1,5 +1,5 @@
-﻿using MemoryPack;
-using Nisp.Core;
+﻿using Nisp.Core;
+using Nisp.Test.Shared;
 using ZLogger;
 
 namespace Nisp.Test.Server
@@ -11,26 +11,18 @@ namespace Nisp.Test.Server
             const string host = "localhost";
             const int port = 7777;
 
-            var service = new NispService();
+            var service = new NispService()
+                .WithLogging(builder => builder.AddZLoggerConsole())
+                .WithCompression();
 
-            await service.StartListenerAsync(host, port);
+            var listener = service.CreateListener(host, port);
+            await listener.ListenAsync();
 
-            await foreach (var message in service.ReceiveAsync<UserMessage>(host, port))
+            await foreach (var _ in listener.ReceiveAsync<UserMessage>())
             {
-                Console.WriteLine(message.Message);
             }
 
-            await service.StopListenerAsync(host, port);
+            await listener.StopAsync();
         }
-    }
-
-    [MemoryPackable]
-    public partial class UserMessage
-    {
-        public int Id { get; set; }
-        public string Message { get; set; }
-        public byte[] MessageBytes { get; set; }
-        public DateTime Time { get; set; }
-        public int RandomNumber { get; set; }
     }
 }

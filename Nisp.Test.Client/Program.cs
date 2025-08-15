@@ -1,5 +1,5 @@
-﻿using MemoryPack;
-using Nisp.Core;
+﻿using Nisp.Core;
+using Nisp.Test.Shared;
 using System.Text;
 using ZLogger;
 
@@ -13,36 +13,26 @@ namespace Nisp.Test.Client
             const int port = 7777;
 
             var service = new NispService();
+            service.WithLogging(builder => builder.AddZLoggerConsole());
 
-            service.EnableLogging(builder => builder.AddZLoggerConsole());
-            await service.StartClientAsync(host, port);
+            var client = service.CreateClient(host, port);
+            await client.ConnectAsync();
 
-            for (int i = 0; i < 100; i++)
+            for (int i = 0; i < 20; i++)
             {
-                int r = Random.Shared.Next();
-                string msg = $"[{i}] Hello world! Your number is {r}";
+                string message = $"Hello from client {i}";
 
-                await service.SendAsync(host, port, new UserMessage 
-                { 
+                await client.SendAsync(new UserMessage
+                {
                     Id = i,
-                    Message = msg,
-                    MessageBytes = Encoding.UTF8.GetBytes(msg),
-                    Time = DateTime.Now,
-                    RandomNumber = r
+                    Message = message,
+                    MessageBytes = Encoding.UTF8.GetBytes(message),
+                    RandomNumber = Random.Shared.Next(),
+                    Time = DateTime.Now
                 });
             }
 
-            await service.StopClientAsync(host, port);
+            await client.StopAsync();
         }
-    }
-
-    [MemoryPackable]
-    public partial class UserMessage
-    {
-        public int Id { get; set; }
-        public string Message { get; set; }
-        public byte[] MessageBytes { get; set; }
-        public DateTime Time { get; set; }
-        public int RandomNumber { get; set; }
     }
 }
