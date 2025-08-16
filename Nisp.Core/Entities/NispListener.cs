@@ -3,8 +3,11 @@ using MemoryPack;
 using Microsoft.Extensions.Logging;
 using System.Buffers.Binary;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using ZLogger;
 
 namespace Nisp.Core.Entities
@@ -13,23 +16,25 @@ namespace Nisp.Core.Entities
     {
         private TcpListener? _listener;
         private TcpClient? _client;
-        private NetworkStream? _stream;
+        private Stream? _stream;
         private readonly byte[] _header = new byte[4];
         private readonly ILogger<NispService>? _logger;
+        private readonly SslOptions? _encryptionOptions;
         private readonly bool _compressionEnabled;
 
-        public NispListener(string host, int port, bool compressionEnabled, ILogger<NispService>? logger = null)
+        public NispListener(string host, int port, bool compressionEnabled, SslOptions? encryptionOptions = null, ILogger<NispService>? logger = null)
         {
             TargetHost = host;
             TargetPort = port;
 
             _compressionEnabled = compressionEnabled;
+            _encryptionOptions = encryptionOptions;
             _logger = logger;
         }
 
         public string TargetHost { get; }
         public int TargetPort { get; }
-        public bool IsConnected => _listener != null && _client?.Connected == true && _stream?.Socket.Connected == true;
+        public bool IsConnected => _listener != null && _client?.Connected == true && _stream != null;
 
         public async Task<bool> ListenAsync(int delay = 10000, int maxAttempts = 5, CancellationToken cancellationToken = default)
         {
@@ -60,6 +65,25 @@ namespace Nisp.Core.Entities
                     _listener.Start();
                     _client = await _listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
                     _stream = _client.GetStream();
+
+                    if (_encryptionOptions != null)
+                    {
+                        var sslStream = new SslStream(
+                            _stream,
+                            leaveInnerStreamOpen: false
+                        );
+
+                        var sslOptions = new SslServerAuthenticationOptions
+                        {
+                            ServerCertificate = _encryptionOptions.Certificate,
+                            EnabledSslProtocols = SslProtocols.Tls13,
+                            ClientCertificateRequired = _encryptionOptions.ClientCertificateRequired,
+                            CertificateRevocationCheckMode = _encryptionOptions.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck
+                        };
+
+                        await sslStream.AuthenticateAsServerAsync(sslOptions, cancellationToken).ConfigureAwait(false);
+                        _stream = sslStream;
+                    }
 
                     successfullyConnected = true;
                 }

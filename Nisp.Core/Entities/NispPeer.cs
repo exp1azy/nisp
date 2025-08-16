@@ -1,6 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
-
-namespace Nisp.Core.Entities
+﻿namespace Nisp.Core.Entities
 {
     public class NispPeer : IAsyncDisposable
     {

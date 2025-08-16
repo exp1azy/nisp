@@ -7,6 +7,7 @@ namespace Nisp.Core
     {
         private ILogger<NispService>? _logger;
         private bool _enableCompression = false;
+        private SslOptions? _encryptionOptions;
 
         public NispService WithLogging(Action<ILoggingBuilder> builder)
         {
@@ -21,12 +22,19 @@ namespace Nisp.Core
             return this;
         }
 
+        public NispService WithSsl(SslOptions options)
+        {
+            ArgumentNullException.ThrowIfNull(options);
+            _encryptionOptions = options;
+            return this;
+        }
+
         public NispClient CreateClient(string host, int port)
         {
             ArgumentNullException.ThrowIfNullOrEmpty(host);
             ArgumentOutOfRangeException.ThrowIfLessThan(port, 0);
 
-            return new NispClient(host, port, _enableCompression, _logger);
+            return new NispClient(host, port, _enableCompression, _encryptionOptions, _logger);
         }
 
         public NispListener CreateListener(string host, int port)
@@ -34,7 +42,7 @@ namespace Nisp.Core
             ArgumentNullException.ThrowIfNullOrEmpty(host);
             ArgumentOutOfRangeException.ThrowIfLessThan(port, 0);
 
-            return new NispListener(host, port, _enableCompression, _logger);
+            return new NispListener(host, port, _enableCompression, _encryptionOptions, _logger);
         }
 
         public NispPeer CreatePeer(string localHost, int localPort, string remoteHost, int remotePort)

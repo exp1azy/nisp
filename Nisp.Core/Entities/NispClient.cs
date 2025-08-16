@@ -2,7 +2,10 @@
 using MemoryPack;
 using Microsoft.Extensions.Logging;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using ZLogger;
 
 namespace Nisp.Core.Entities
@@ -10,22 +13,24 @@ namespace Nisp.Core.Entities
     public sealed class NispClient : IAsyncDisposable
     {
         private TcpClient? _client;
-        private NetworkStream? _stream;
+        private Stream? _stream;
         private readonly ILogger<NispService>? _logger;
         private readonly bool _compressionEnabled;
+        private readonly SslOptions? _encryptionOptions;
 
-        public NispClient(string host, int port, bool compressionEnabled = false, ILogger<NispService>? logger = null)
+        public NispClient(string host, int port, bool compressionEnabled = false, SslOptions? encryptionOptions = null, ILogger<NispService>? logger = null)
         {
             TargetHost = host;
             TargetPort = port;
 
             _compressionEnabled = compressionEnabled;
+            _encryptionOptions = encryptionOptions;
             _logger = logger;
         }
 
         public string TargetHost { get; }
         public int TargetPort { get; }
-        public bool IsConnected => _client?.Connected == true && _stream?.Socket.Connected == true;
+        public bool IsConnected => _client?.Connected == true && _stream != null;
 
         public async Task<bool> ConnectAsync(int delay = 10000, int sendTimeout = 30000, int maxAttemts = 5, CancellationToken cancellationToken = default)
         {
@@ -58,6 +63,26 @@ namespace Nisp.Core.Entities
 
                     await _client.ConnectAsync(endpoint, cancellationToken).ConfigureAwait(false);
                     _stream = _client.GetStream();
+
+                    if (_encryptionOptions != null)
+                    {
+                        var sslStream = new SslStream(
+                            _stream,
+                            leaveInnerStreamOpen: false,
+                            userCertificateValidationCallback: ValidateServerCertificate
+                        );
+
+                        var options = new SslClientAuthenticationOptions
+                        {
+                            TargetHost = TargetHost,
+                            EnabledSslProtocols = SslProtocols.Tls13,
+                            CertificateRevocationCheckMode = _encryptionOptions.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck,
+                            ClientCertificates = [_encryptionOptions.Certificate]
+                        };
+
+                        await sslStream.AuthenticateAsClientAsync(options, cancellationToken).ConfigureAwait(false);
+                        _stream = sslStream;
+                    }
 
                     successfullyConnected = true;
                 }
@@ -130,6 +155,15 @@ namespace Nisp.Core.Entities
         {
             await StopAsync().ConfigureAwait(false);
             GC.SuppressFinalize(this);
+        }
+
+        private bool ValidateServerCertificate(object sender, X509Certificate? cert, X509Chain? chain, SslPolicyErrors errors)
+        {
+            if (errors == SslPolicyErrors.None)
+                return true;
+
+            _logger?.ZLogError($"[{DateTime.UtcNow}] Certificate validation failed: {errors}");
+            return false;
         }
     }
 }
