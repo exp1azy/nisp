@@ -361,3 +361,8 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/Nisp.Test.Adam/Nisp.Test.Adam.csproj
+/Nisp.Test.Eve/Nisp.Test.Eve.csproj
+/Nisp.Test.Client/Nisp.Test.Client.csproj
+/Nisp.Test.Server/Nisp.Test.Server.csproj
+/Nisp.Test.Shared/Nisp.Test.Shared.csproj
