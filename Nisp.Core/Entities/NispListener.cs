@@ -12,6 +12,9 @@ using ZLogger;
 
 namespace Nisp.Core.Entities
 {
+    /// <summary>
+    /// Represents a listener for the NISP protocol.
+    /// </summary>
     public sealed class NispListener : IAsyncDisposable
     {
         private TcpListener? _listener;
@@ -22,6 +25,14 @@ namespace Nisp.Core.Entities
         private readonly SslOptions? _encryptionOptions;
         private readonly bool _compressionEnabled;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="NispListener"/> class.
+        /// </summary>
+        /// <param name="host">The hostname or IP address to listen on.</param>
+        /// <param name="port">The port number to listen on.</param>
+        /// <param name="compressionEnabled">Enable LZ4 compression for received messages.</param>
+        /// <param name="encryptionOptions">SSL/TLS configuration options.</param>
+        /// <param name="logger">Optional logger instance for diagnostics.</param>
         public NispListener(string host, int port, bool compressionEnabled, SslOptions? encryptionOptions = null, ILogger<NispService>? logger = null)
         {
             TargetHost = host;
@@ -32,10 +43,29 @@ namespace Nisp.Core.Entities
             _logger = logger;
         }
 
+        /// <summary>
+        /// The hostname or IP address to listen on.
+        /// </summary>
         public string TargetHost { get; }
+
+        /// <summary>
+        /// The port number to listen on.
+        /// </summary>
         public int TargetPort { get; }
+
+        /// <summary>
+        /// Indicates whether the listener is currently connected to a client.
+        /// </summary>
         public bool IsConnected => _listener != null && _client?.Connected == true && _stream != null;
 
+        /// <summary>
+        /// Starts listening for incoming connections.
+        /// </summary>
+        /// <param name="delay">Delay between retry attempts in milliseconds.</param>
+        /// <param name="maxAttempts">Maximum number of connection attempts.</param>
+        /// <param name="cancellationToken">Cancellation token for aborting the operation.</param>
+        /// <returns><c>true</c> if listening started successfully, <c>false</c> otherwise.</returns>
+        /// <exception cref="InvalidOperationException">Thrown when already connected.</exception>
         public async Task<bool> ListenAsync(int delay = 10000, int maxAttempts = 5, CancellationToken cancellationToken = default)
         {
             if (IsConnected)
@@ -78,7 +108,10 @@ namespace Nisp.Core.Entities
                             ServerCertificate = _encryptionOptions.Certificate,
                             EnabledSslProtocols = SslProtocols.Tls13,
                             ClientCertificateRequired = _encryptionOptions.ClientCertificateRequired,
-                            CertificateRevocationCheckMode = _encryptionOptions.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck
+                            CertificateRevocationCheckMode = _encryptionOptions.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck,
+                            RemoteCertificateValidationCallback = (s, cert, ch, errors) => _encryptionOptions.RemoteCertificateValidationCallback == null ?
+                                ValidateClientCertificate(s, cert, ch, errors) :
+                                _encryptionOptions.RemoteCertificateValidationCallback(s, cert, ch, errors)
                         };
 
                         await sslStream.AuthenticateAsServerAsync(sslOptions, cancellationToken).ConfigureAwait(false);
@@ -104,6 +137,13 @@ namespace Nisp.Core.Entities
             return successfullyConnected;
         }
 
+        /// <summary>
+        /// Asynchronously receives messages from the connected client.
+        /// </summary>
+        /// <typeparam name="TMessage">Type of the message to receive.</typeparam>
+        /// <param name="cancellationToken">Cancellation token for aborting the operation.</param>
+        /// <returns>Async enumerable of received messages.</returns>
+        /// <exception cref="InvalidOperationException">Thrown when not connected.</exception>
         public async IAsyncEnumerable<TMessage> ReceiveAsync<TMessage>([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             if (!IsConnected)
@@ -144,6 +184,9 @@ namespace Nisp.Core.Entities
             }
         }
 
+        /// <summary>
+        /// Stops listening for incoming connections.
+        /// </summary>
         public async ValueTask StopAsync()
         {
             if (!IsConnected)
@@ -176,10 +219,22 @@ namespace Nisp.Core.Entities
             _logger?.ZLogInformation($"[{DateTime.UtcNow}] The server has been successfully disconnected from {TargetHost}:{TargetPort}");
         }
 
+        /// <summary>
+        /// Disposes the listener resources asynchronously.
+        /// </summary>
         public async ValueTask DisposeAsync()
         {
             await StopAsync().ConfigureAwait(false);
             GC.SuppressFinalize(this);
+        }
+
+        private bool ValidateClientCertificate(object sender, X509Certificate? cert, X509Chain? chain, SslPolicyErrors errors)
+        {
+            if (errors == SslPolicyErrors.None)
+                return true;
+
+            _logger?.ZLogError($"[{DateTime.UtcNow}] Client certificate validation failed: {errors}");
+            return false;
         }
     }
 }

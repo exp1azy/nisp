@@ -10,6 +10,9 @@ using ZLogger;
 
 namespace Nisp.Core.Entities
 {
+    /// <summary>
+    /// Represents a client for the NISP protocol.
+    /// </summary>
     public sealed class NispClient : IAsyncDisposable
     {
         private TcpClient? _client;
@@ -18,6 +21,14 @@ namespace Nisp.Core.Entities
         private readonly bool _compressionEnabled;
         private readonly SslOptions? _encryptionOptions;
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="NispClient"/> class.
+        /// </summary>
+        /// <param name="host">Target hostname or IP address.</param>
+        /// <param name="port">Target port number.</param>
+        /// <param name="compressionEnabled">Enable LZ4 compression for messages.</param>
+        /// <param name="encryptionOptions">SSL/TLS configuration options.</param>
+        /// <param name="logger">Optional logger instance.</param>
         public NispClient(string host, int port, bool compressionEnabled = false, SslOptions? encryptionOptions = null, ILogger<NispService>? logger = null)
         {
             TargetHost = host;
@@ -28,10 +39,30 @@ namespace Nisp.Core.Entities
             _logger = logger;
         }
 
+        /// <summary>
+        /// Gets the target hostname or IP address.
+        /// </summary>
         public string TargetHost { get; }
+
+        /// <summary>
+        /// Gets the target port number.
+        /// </summary>
         public int TargetPort { get; }
+
+        /// <summary>
+        /// Gets a value indicating whether the client is connected.
+        /// </summary>
         public bool IsConnected => _client?.Connected == true && _stream != null;
 
+        /// <summary>
+        /// Establishes a connection to the remote endpoint.
+        /// </summary>
+        /// <param name="delay">Delay between retry attempts in milliseconds.</param>
+        /// <param name="sendTimeout">Send operation timeout in milliseconds.</param>
+        /// <param name="maxAttemts">Maximum number of connection attempts.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns><c>true</c> if connection succeeded, <c>false</c> otherwise.</returns>
+        /// <exception cref="InvalidOperationException">Thrown when already connected.</exception>
         public async Task<bool> ConnectAsync(int delay = 10000, int sendTimeout = 30000, int maxAttemts = 5, CancellationToken cancellationToken = default)
         {
             if (IsConnected)
@@ -68,8 +99,7 @@ namespace Nisp.Core.Entities
                     {
                         var sslStream = new SslStream(
                             _stream,
-                            leaveInnerStreamOpen: false,
-                            userCertificateValidationCallback: ValidateServerCertificate
+                            leaveInnerStreamOpen: false
                         );
 
                         var options = new SslClientAuthenticationOptions
@@ -77,7 +107,10 @@ namespace Nisp.Core.Entities
                             TargetHost = TargetHost,
                             EnabledSslProtocols = SslProtocols.Tls13,
                             CertificateRevocationCheckMode = _encryptionOptions.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck,
-                            ClientCertificates = [_encryptionOptions.Certificate]
+                            ClientCertificates = [_encryptionOptions.Certificate],
+                            RemoteCertificateValidationCallback = (s, cert, ch, errors) => _encryptionOptions.RemoteCertificateValidationCallback == null ?
+                                ValidateServerCertificate(s, cert, ch, errors) :
+                                _encryptionOptions.RemoteCertificateValidationCallback(s, cert, ch, errors)
                         };
 
                         await sslStream.AuthenticateAsClientAsync(options, cancellationToken).ConfigureAwait(false);
@@ -89,7 +122,7 @@ namespace Nisp.Core.Entities
                 catch (Exception)
                 {
                     _logger?.ZLogWarning($"[{DateTime.UtcNow}] Failed to connect the client to {TargetHost}:{TargetPort}, next attempt after {delay} ms");
-                    
+
                     attempt++;
                     await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 }
@@ -103,6 +136,14 @@ namespace Nisp.Core.Entities
             return successfullyConnected;
         }
 
+        /// <summary>
+        /// Sends a message to the connected server.
+        /// </summary>
+        /// <typeparam name="TMessage">Type of the message.</typeparam>
+        /// <param name="message">Message to send.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <exception cref="InvalidOperationException">Thrown when not connected.</exception>
+        /// <exception cref="ArgumentNullException">Thrown when message is null.</exception>
         public async Task SendAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)
         {
             if (!IsConnected)
@@ -110,7 +151,7 @@ namespace Nisp.Core.Entities
                 _logger?.ZLogError($"[{DateTime.UtcNow}] The client is not connected to {TargetHost}:{TargetPort}");
                 throw new InvalidOperationException($"The client is not connected to {TargetHost}:{TargetPort}");
             }
-              
+
             ArgumentNullException.ThrowIfNull(message);
 
             byte[] payload = MemoryPackSerializer.Serialize(message);
@@ -126,6 +167,9 @@ namespace Nisp.Core.Entities
             _logger?.ZLogInformation($"[{DateTime.UtcNow}] Sent message of type {typeof(TMessage).Name} to {TargetHost}:{TargetPort}");
         }
 
+        /// <summary>
+        /// Gracefully disconnects from the server.
+        /// </summary>
         public async ValueTask StopAsync()
         {
             if (!IsConnected)
@@ -151,6 +195,9 @@ namespace Nisp.Core.Entities
             _logger?.ZLogInformation($"[{DateTime.UtcNow}] The client has successfully disconnected from {TargetHost}:{TargetPort}");
         }
 
+        /// <summary>
+        /// Disposes the client resources asynchronously.
+        /// </summary>
         public async ValueTask DisposeAsync()
         {
             await StopAsync().ConfigureAwait(false);
@@ -162,7 +209,7 @@ namespace Nisp.Core.Entities
             if (errors == SslPolicyErrors.None)
                 return true;
 
-            _logger?.ZLogError($"[{DateTime.UtcNow}] Certificate validation failed: {errors}");
+            _logger?.ZLogError($"[{DateTime.UtcNow}] Server certificate validation failed: {errors}");
             return false;
         }
     }
