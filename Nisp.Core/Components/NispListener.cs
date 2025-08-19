@@ -10,7 +10,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using ZLogger;
 
-namespace Nisp.Core.Entities
+namespace Nisp.Core.Components
 {
     /// <summary>
     /// Represents a listener for the NISP protocol.
@@ -120,6 +120,11 @@ namespace Nisp.Core.Entities
 
                     successfullyConnected = true;
                 }
+                catch (OperationCanceledException)
+                {
+                    _logger?.ZLogInformation($"[{DateTime.UtcNow}] The server has stopped listening on {TargetHost}:{TargetPort}");
+                    return successfullyConnected;
+                }
                 catch (Exception)
                 {
                     _logger?.ZLogWarning($"[{DateTime.UtcNow}] Failed to connect the listener to {TargetHost}:{TargetPort}, next attempt after {delay} ms");
@@ -168,6 +173,11 @@ namespace Nisp.Core.Entities
                         payload = LZ4Pickler.Unpickle(payload);
 
                     message = MemoryPackSerializer.Deserialize<TMessage>(payload);
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger?.ZLogInformation($"[{DateTime.UtcNow}] The server has stopped receiving messages from {TargetHost}:{TargetPort}");
+                    yield break;
                 }
                 catch (Exception ex)
                 {

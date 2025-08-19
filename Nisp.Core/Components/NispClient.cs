@@ -8,7 +8,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using ZLogger;
 
-namespace Nisp.Core.Entities
+namespace Nisp.Core.Components
 {
     /// <summary>
     /// Represents a client for the NISP protocol.
@@ -59,11 +59,11 @@ namespace Nisp.Core.Entities
         /// </summary>
         /// <param name="delay">Delay between retry attempts in milliseconds.</param>
         /// <param name="sendTimeout">Send operation timeout in milliseconds.</param>
-        /// <param name="maxAttemts">Maximum number of connection attempts.</param>
+        /// <param name="maxAttempts">Maximum number of connection attempts.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns><c>true</c> if connection succeeded, <c>false</c> otherwise.</returns>
         /// <exception cref="InvalidOperationException">Thrown when already connected.</exception>
-        public async Task<bool> ConnectAsync(int delay = 10000, int sendTimeout = 30000, int maxAttemts = 5, CancellationToken cancellationToken = default)
+        public async Task<bool> ConnectAsync(int delay = 10000, int sendTimeout = 30000, int maxAttempts = 5, CancellationToken cancellationToken = default)
         {
             if (IsConnected)
             {
@@ -76,7 +76,7 @@ namespace Nisp.Core.Entities
             bool successfullyConnected = false;
             int attempt = 0;
 
-            while (!successfullyConnected && !cancellationToken.IsCancellationRequested && attempt < maxAttemts)
+            while (!successfullyConnected && !cancellationToken.IsCancellationRequested && attempt < maxAttempts)
             {
                 try
                 {
@@ -119,6 +119,11 @@ namespace Nisp.Core.Entities
 
                     successfullyConnected = true;
                 }
+                catch (OperationCanceledException)
+                {
+                    _logger?.ZLogInformation($"[{DateTime.UtcNow}] The client has stopped connecting to {TargetHost}:{TargetPort}");
+                    return successfullyConnected;
+                }
                 catch (Exception)
                 {
                     _logger?.ZLogWarning($"[{DateTime.UtcNow}] Failed to connect the client to {TargetHost}:{TargetPort}, next attempt after {delay} ms");
@@ -154,17 +159,30 @@ namespace Nisp.Core.Entities
 
             ArgumentNullException.ThrowIfNull(message);
 
-            byte[] payload = MemoryPackSerializer.Serialize(message);
+            try
+            {
+                byte[] payload = MemoryPackSerializer.Serialize(message);
 
-            if (_compressionEnabled)
-                payload = LZ4Pickler.Pickle(payload);
+                if (_compressionEnabled)
+                    payload = LZ4Pickler.Pickle(payload);
 
-            byte[] header = BitConverter.GetBytes(payload.Length);
+                byte[] header = BitConverter.GetBytes(payload.Length);
 
-            await _stream.WriteAsync(header, cancellationToken).ConfigureAwait(false);
-            await _stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+                await _stream.WriteAsync(header, cancellationToken).ConfigureAwait(false);
+                await _stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
 
-            _logger?.ZLogInformation($"[{DateTime.UtcNow}] Sent message of type {typeof(TMessage).Name} to {TargetHost}:{TargetPort}");
+                _logger?.ZLogInformation($"[{DateTime.UtcNow}] Sent message of type {typeof(TMessage).Name} to {TargetHost}:{TargetPort}");
+            }
+            catch (OperationCanceledException)
+            {
+                _logger?.ZLogError($"[{DateTime.UtcNow}] The client stopped to send the message to {TargetHost}:{TargetPort}");
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger?.ZLogError($"[{DateTime.UtcNow}] The client failed to send the message to {TargetHost}:{TargetPort}: {ex.Message}");
+                throw;
+            }
         }
 
         /// <summary>

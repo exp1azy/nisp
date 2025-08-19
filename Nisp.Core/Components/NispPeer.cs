@@ -1,4 +1,4 @@
-﻿namespace Nisp.Core.Entities
+﻿namespace Nisp.Core.Components
 {
     /// <summary>
     /// Represents a bidirectional communication peer that combines both client and listener capabilities
@@ -61,7 +61,7 @@
         /// <returns>Task representing the asynchronous send operation.</returns>
         public async Task SendAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)
         {
-            await _client.SendAsync(message, cancellationToken);
+            await _client.SendAsync(message, cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -95,8 +95,8 @@
         /// </summary>
         public async ValueTask DisposeAsync()
         {
-            await _client.DisposeAsync();
-            await _listener.DisposeAsync();
+            await _client.DisposeAsync().ConfigureAwait(false);
+            await _listener.DisposeAsync().ConfigureAwait(false);
             GC.SuppressFinalize(this);
         }
     }

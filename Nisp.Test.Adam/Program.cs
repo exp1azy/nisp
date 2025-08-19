@@ -1,7 +1,6 @@
 ﻿using Nisp.Core;
-using Nisp.Core.Entities;
+using Nisp.Core.Components;
 using Nisp.Test.Shared;
-using ZLogger;
 
 namespace Nisp.Test.Adam
 {
@@ -9,9 +8,7 @@ namespace Nisp.Test.Adam
     {
         static async Task Main(string[] args)
         {
-            var service = new NispService()
-                .WithLogging(builder => builder.AddZLoggerConsole())
-                .WithCompression();
+            var service = new NispService();
 
             var peer = service.CreatePeer(new PeerConfig
             {

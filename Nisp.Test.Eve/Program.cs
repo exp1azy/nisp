@@ -1,5 +1,5 @@
 ﻿using Nisp.Core;
-using Nisp.Core.Entities;
+using Nisp.Core.Components;
 using Nisp.Test.Shared;
 using ZLogger;
 
@@ -10,8 +10,8 @@ namespace Nisp.Test.Eve
         static async Task Main(string[] args)
         {
             var service = new NispService()
-                .WithLogging(builder => builder.AddZLoggerConsole())
-                .WithCompression();
+                .WithCompression()
+                .WithLogging(b => b.AddZLoggerConsole());
 
             var peer = service.CreatePeer(new PeerConfig
             {

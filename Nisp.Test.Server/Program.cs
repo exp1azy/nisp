@@ -1,6 +1,5 @@
 ﻿using Nisp.Core;
 using Nisp.Test.Shared;
-using ZLogger;
 
 namespace Nisp.Test.Server
 {
@@ -11,15 +10,13 @@ namespace Nisp.Test.Server
             const string host = "localhost";
             const int port = 7777;
 
-            var service = new NispService()
-                .WithLogging(builder => builder.AddZLoggerConsole())
-                .WithCompression();
-
+            var service = new NispService();
             var listener = service.CreateListener(host, port);
             await listener.ListenAsync();
 
-            await foreach (var _ in listener.ReceiveAsync<UserMessage>())
+            await foreach (var message in listener.ReceiveAsync<UserMessage>())
             {
+                Console.WriteLine($"Received: {message.Message}");
             }
 
             await listener.StopAsync();

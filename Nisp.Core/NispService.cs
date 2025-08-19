@@ -1,5 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
-using Nisp.Core.Entities;
+using Nisp.Core.Components;
 
 namespace Nisp.Core
 {
