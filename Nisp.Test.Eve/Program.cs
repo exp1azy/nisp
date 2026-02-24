@@ -1,7 +1,7 @@
-﻿using Nisp.Core;
+﻿using Microsoft.Extensions.Logging;
+using Nisp.Core;
 using Nisp.Core.Components;
 using Nisp.Test.Shared;
-using ZLogger;
 
 namespace Nisp.Test.Eve
 {
@@ -11,9 +11,9 @@ namespace Nisp.Test.Eve
         {
             var service = new NispService()
                 .WithCompression()
-                .WithLogging(b => b.AddZLoggerConsole());
+                .WithLogging(builder => builder.AddConsole());
 
-            var peer = service.CreatePeer(new PeerConfig
+            var peer = service.CreateBidirectional(new PeerConfig
             {
                 ClientHost = "localhost",
                 ClientPort = 5000,

@@ -1,33 +1,33 @@
 ﻿namespace Nisp.Core.Components
 {
     /// <summary>
-    /// Represents a bidirectional communication peer that combines both client and listener capabilities
+    /// Represents a bidirectional communication peer that combines both client and receiver capabilities
     /// for full-duplex communication between services. Manages connection lifecycle and message exchange.
     /// </summary>
     public class NispPeer : IAsyncDisposable
     {
         private readonly NispClient _client;
-        private readonly NispListener _listener;
+        private readonly NispReceiver _receiver;
 
         /// <summary>
-        /// Initializes a new instance of the NispPeer with specified client and listener components.
+        /// Initializes a new instance of the <see cref="NispPeer"/> with specified client and receiver components.
         /// </summary>
         /// <param name="client">Configured client instance for outgoing connections.</param>
-        /// <param name="listener">Configured listener instance for incoming connections.</param>
+        /// <param name="receiver">Configured receiver instance for incoming connections.</param>
         /// <exception cref="ArgumentNullException">Thrown if client or listener is null.</exception>
-        public NispPeer(NispClient client, NispListener listener)
+        public NispPeer(NispClient client, NispReceiver receiver)
         {
             _client = client;
-            _listener = listener;
+            _receiver = receiver;
         }
 
         /// <summary>
-        /// Indicates whether the peer is currently connected to both client and listener components.
+        /// Indicates whether the peer is currently connected to both client and receiver components.
         /// </summary>
-        public bool IsConnected => _client.IsConnected && _listener.IsConnected;
+        public bool IsConnected => _client.IsConnected && _receiver.IsConnected;
 
         /// <summary>
-        /// Establishes a bidirectional connection between the client and listener components.
+        /// Establishes a bidirectional connection between the client and receiver components.
         /// </summary>
         /// <param name="delay">Delay between connection attempts in milliseconds.</param>
         /// <param name="sendTimeout">Timeout for send operations in milliseconds.</param>
@@ -41,15 +41,18 @@
         /// The method attempts to establish both connections in parallel. If either connection fails,
         /// both will be retried according to the specified parameters.
         /// </remarks>
-        public async Task<bool> ConnectAsync(int delay = 10000, int sendTimeout = 30000, int maxAttempts = 5, CancellationToken cancellationToken = default)
+        public async Task ConnectAsync(int delay = 10000, int sendTimeout = 30000, int maxAttempts = 5, CancellationToken cancellationToken = default)
         {
-            var clientTask = _client.ConnectAsync(delay, sendTimeout, maxAttempts, cancellationToken).ConfigureAwait(false);
-            var listenerTask = _listener.ListenAsync(delay, maxAttempts, cancellationToken).ConfigureAwait(false);
+            var tasks = new List<Task<bool>>() 
+            { 
+                _client.ConnectAsync(delay, sendTimeout, maxAttempts, cancellationToken), 
+                _receiver.ListenAsync(delay, maxAttempts, cancellationToken) 
+            };
 
-            bool clientConnected = await clientTask;
-            bool listenerConnected = await listenerTask;
-
-            return clientConnected && listenerConnected;
+            await Parallel.ForEachAsync(tasks, async (t, ct) =>
+            {
+                await t.ConfigureAwait(false);
+            });
         }
 
         /// <summary>
@@ -75,28 +78,27 @@
         /// </returns>
         public IAsyncEnumerable<TMessage> ReceiveAsync<TMessage>(CancellationToken cancellationToken = default)
         {
-            return _listener.ReceiveAsync<TMessage>(cancellationToken);
+            return _receiver.ReceiveAsync<TMessage>(cancellationToken);
         }
 
         /// <summary>
-        /// Gracefully stops both client and listener connections
+        /// Gracefully stops both client and listener connections.
         /// </summary>
-        public async ValueTask StopAsync()
+        public async Task StopAsync()
         {
-            var clientTask = _client.StopAsync().ConfigureAwait(false);
-            var listenerTask = _listener.StopAsync().ConfigureAwait(false);
+            var clientTask = _client.StopAsync().AsTask();
+            var receiverTask = _receiver.StopAsync().AsTask();
 
-            await clientTask;
-            await listenerTask;
+            await Task.WhenAll(clientTask, receiverTask);
         }
 
         /// <summary>
-        /// Disposes of both client and listener resources asynchronously
+        /// Disposes of both client and listener resources asynchronously.
         /// </summary>
         public async ValueTask DisposeAsync()
         {
             await _client.DisposeAsync().ConfigureAwait(false);
-            await _listener.DisposeAsync().ConfigureAwait(false);
+            await _receiver.DisposeAsync().ConfigureAwait(false);
             GC.SuppressFinalize(this);
         }
     }

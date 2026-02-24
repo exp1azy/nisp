@@ -1,5 +1,4 @@
-﻿using K4os.Compression.LZ4;
-using MemoryPack;
+﻿using MemoryPack;
 using Microsoft.Extensions.Logging;
 using System.Buffers.Binary;
 using System.Net;
@@ -8,39 +7,41 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
-using ZLogger;
+using ZstdSharp;
 
 namespace Nisp.Core.Components
 {
     /// <summary>
-    /// Represents a listener for the NISP protocol.
+    /// Represents a receiver for the NISP protocol.
     /// </summary>
-    public sealed class NispListener : IAsyncDisposable
+    public sealed class NispReceiver : IAsyncDisposable
     {
         private TcpListener? _listener;
         private TcpClient? _client;
         private Stream? _stream;
+        private Decompressor? _decompressor;
         private readonly byte[] _header = new byte[4];
-        private readonly ILogger<NispService>? _logger;
+        private readonly ILogger<NispReceiver>? _logger;
         private readonly SslOptions? _encryptionOptions;
-        private readonly bool _compressionEnabled;
-
+        
         /// <summary>
-        /// Initializes a new instance of the <see cref="NispListener"/> class.
+        /// Initializes a new instance of the <see cref="NispReceiver"/> class.
         /// </summary>
         /// <param name="host">The hostname or IP address to listen on.</param>
         /// <param name="port">The port number to listen on.</param>
-        /// <param name="compressionEnabled">Enable LZ4 compression for received messages.</param>
+        /// <param name="compressionEnabled">Enable ZStandard compression for received messages.</param>
         /// <param name="encryptionOptions">SSL/TLS configuration options.</param>
-        /// <param name="logger">Optional logger instance for diagnostics.</param>
-        public NispListener(string host, int port, bool compressionEnabled, SslOptions? encryptionOptions = null, ILogger<NispService>? logger = null)
+        /// <param name="loggerFactory">Optional logger factory instance.</param>
+        public NispReceiver(string host, int port, bool compressionEnabled = false, SslOptions? encryptionOptions = null, ILoggerFactory? loggerFactory = null)
         {
             TargetHost = host;
             TargetPort = port;
 
-            _compressionEnabled = compressionEnabled;
+            if (compressionEnabled)
+                _decompressor = new Decompressor();
+
             _encryptionOptions = encryptionOptions;
-            _logger = logger;
+            _logger = loggerFactory?.CreateLogger<NispReceiver>();
         }
 
         /// <summary>
@@ -70,11 +71,11 @@ namespace Nisp.Core.Components
         {
             if (IsConnected)
             {
-                _logger?.ZLogError($"[{DateTime.UtcNow}] The listener could not be started because he is already connected to {TargetHost}:{TargetPort}");
+                _logger?.LogError("The listener could not be started because he is already connected to {Host}:{Port}", TargetHost, TargetPort);
                 throw new InvalidOperationException($"The listener could not be started because he is already connected to {TargetHost}:{TargetPort}");
             }
 
-            _logger?.ZLogInformation($"[{DateTime.UtcNow}] The listener has started connecting to {TargetHost}:{TargetPort}...");
+            _logger?.LogInformation("The listener has started connecting to {Host}:{Port}...", TargetHost, TargetPort);
 
             bool successfullyConnected = false;
             int attempt = 0;
@@ -106,12 +107,16 @@ namespace Nisp.Core.Components
                         var sslOptions = new SslServerAuthenticationOptions
                         {
                             ServerCertificate = _encryptionOptions.Certificate,
-                            EnabledSslProtocols = SslProtocols.Tls13,
                             ClientCertificateRequired = _encryptionOptions.ClientCertificateRequired,
+                            EnabledSslProtocols = SslProtocols.None,
                             CertificateRevocationCheckMode = _encryptionOptions.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck,
-                            RemoteCertificateValidationCallback = (s, cert, ch, errors) => _encryptionOptions.RemoteCertificateValidationCallback == null ?
-                                ValidateClientCertificate(s, cert, ch, errors) :
-                                _encryptionOptions.RemoteCertificateValidationCallback(s, cert, ch, errors)
+                            RemoteCertificateValidationCallback = (s, cert, ch, errors) =>
+                            {
+                                if (_encryptionOptions.RemoteCertificateValidationCallback == null)
+                                    return ValidateClientCertificate(s, cert, ch, errors);
+
+                                return _encryptionOptions.RemoteCertificateValidationCallback(s, cert, ch, errors);
+                            }  
                         };
 
                         await sslStream.AuthenticateAsServerAsync(sslOptions, cancellationToken).ConfigureAwait(false);
@@ -122,22 +127,26 @@ namespace Nisp.Core.Components
                 }
                 catch (OperationCanceledException)
                 {
-                    _logger?.ZLogInformation($"[{DateTime.UtcNow}] The server has stopped listening on {TargetHost}:{TargetPort}");
+                    _logger?.LogInformation("The server has stopped listening on {Host}:{Port}", TargetHost, TargetPort);
                     return successfullyConnected;
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    _logger?.ZLogWarning($"[{DateTime.UtcNow}] Failed to connect the listener to {TargetHost}:{TargetPort}, next attempt after {delay} ms");
+                    _logger?.LogWarning(ex, "Failed to connect the listener to {Host}:{Port}, next attempt after {Delay} ms", TargetHost, TargetPort, delay);
 
                     attempt++;
+
+                    if (attempt == maxAttempts)
+                        continue;
+
                     await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 }
             }
 
             if (successfullyConnected)
-                _logger?.ZLogInformation($"[{DateTime.UtcNow}] The server has successfully started listening on {TargetHost}:{TargetPort}");
+                _logger?.LogInformation("The server has successfully started listening on {Host}:{Port}", TargetHost, TargetPort);
             else
-                _logger?.ZLogError($"[{DateTime.UtcNow}] The server failed to start listening on {TargetHost}:{TargetPort}");
+                _logger?.LogError("The server failed to start listening on {Host}:{Port}", TargetHost, TargetPort);
 
             return successfullyConnected;
         }
@@ -153,7 +162,7 @@ namespace Nisp.Core.Components
         {
             if (!IsConnected)
             {
-                _logger?.ZLogError($"[{DateTime.UtcNow}] It was not possible to start receiving messages because the server is not listening to {TargetHost}:{TargetPort}");
+                _logger?.LogError("It was not possible to start receiving messages because the server is not listening to {Host}:{Port}", TargetHost, TargetPort);
                 throw new InvalidOperationException($"It was not possible to start receiving messages because the server is not listening to {TargetHost}:{TargetPort}");
             }
 
@@ -169,27 +178,28 @@ namespace Nisp.Core.Components
                     byte[] payload = new byte[messageSize];
                     await _stream.ReadExactlyAsync(payload, cancellationToken).ConfigureAwait(false);
 
-                    if (_compressionEnabled)
-                        payload = LZ4Pickler.Unpickle(payload);
+                    if (_decompressor != null)
+                        payload = _decompressor.Unwrap(payload).ToArray();
 
                     message = MemoryPackSerializer.Deserialize<TMessage>(payload);
                 }
+                catch (EndOfStreamException)
+                {
+                    _logger?.LogInformation("All messages from client has been readed.");
+                    yield break;
+                }
                 catch (OperationCanceledException)
                 {
-                    _logger?.ZLogInformation($"[{DateTime.UtcNow}] The server has stopped receiving messages from {TargetHost}:{TargetPort}");
+                    _logger?.LogInformation("The server has stopped receiving messages from {Host}:{Port}", TargetHost, TargetPort);
                     yield break;
                 }
                 catch (Exception ex)
                 {
-                    _logger?.ZLogError($"[{DateTime.UtcNow}] {ex.Message}");
+                    _logger?.LogError(ex, "An error occurred while trying to receive a message");
                     yield break;
                 }
-                finally
-                {
-                    Array.Clear(_header, 0, _header.Length);
-                }
 
-                _logger?.ZLogInformation($"[{DateTime.UtcNow}] Received message of type {typeof(TMessage).Name} from {TargetHost}:{TargetPort}");
+                _logger?.LogInformation("Received message of type {Type} from {Host}:{Port}", typeof(TMessage).Name, TargetHost, TargetPort);
                 yield return message;
             }
         }
@@ -201,7 +211,7 @@ namespace Nisp.Core.Components
         {
             if (!IsConnected)
             {
-                _logger?.ZLogWarning($"[{DateTime.UtcNow}] Couldn't stop the server because it's not listening on {TargetHost}:{TargetPort}");
+                _logger?.LogWarning("Couldn't stop the server because it's not listening on {Host}:{Port}", TargetHost, TargetPort);
                 return;
             }
 
@@ -215,7 +225,6 @@ namespace Nisp.Core.Components
             if (_client != null)
             {
                 _client.Close();
-                _client.Dispose();
                 _client = null;
             }
 
@@ -226,7 +235,13 @@ namespace Nisp.Core.Components
                 _listener = null;
             }
 
-            _logger?.ZLogInformation($"[{DateTime.UtcNow}] The server has been successfully disconnected from {TargetHost}:{TargetPort}");
+            if (_decompressor != null)
+            {
+                _decompressor.Dispose();
+                _decompressor = null;
+            }
+
+            _logger?.LogInformation("The server has been successfully disconnected from {Host}:{Port}", TargetHost, TargetPort);
         }
 
         /// <summary>
@@ -243,7 +258,7 @@ namespace Nisp.Core.Components
             if (errors == SslPolicyErrors.None)
                 return true;
 
-            _logger?.ZLogError($"[{DateTime.UtcNow}] Client certificate validation failed: {errors}");
+            _logger?.LogError("Client certificate validation failed: {Error}", errors);
             return false;
         }
     }

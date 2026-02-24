@@ -11,7 +11,7 @@ namespace Nisp.Test.Server
             const int port = 7777;
 
             var service = new NispService();
-            var listener = service.CreateListener(host, port);
+            var listener = service.CreateReceiver(host, port);
             await listener.ListenAsync();
 
             await foreach (var message in listener.ReceiveAsync<UserMessage>())

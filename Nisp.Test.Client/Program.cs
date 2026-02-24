@@ -1,7 +1,7 @@
-﻿using Nisp.Core;
+﻿using Microsoft.Extensions.Logging;
+using Nisp.Core;
 using Nisp.Test.Shared;
 using System.Text;
-using ZLogger;
 
 namespace Nisp.Test.Client
 {
@@ -13,7 +13,7 @@ namespace Nisp.Test.Client
             const int port = 7777;
 
             var service = new NispService();
-            service.WithLogging(builder => builder.AddZLoggerConsole());
+            service.WithLogging(builder => builder.AddConsole());
 
             var client = service.CreateClient(host, port);
             await client.ConnectAsync();
