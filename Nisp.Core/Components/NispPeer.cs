@@ -1,105 +1,173 @@
-﻿namespace Nisp.Core.Components
+﻿using Microsoft.Extensions.Logging;
+using Nisp.Core.Entities;
+
+namespace Nisp.Core.Components
 {
     /// <summary>
-    /// Represents a bidirectional communication peer that combines both client and receiver capabilities
-    /// for full-duplex communication between services. Manages connection lifecycle and message exchange.
+    /// Represents a bidirectional communication peer that combines both sender and receiver capabilities for full-duplex communication between services.
     /// </summary>
+    /// <remarks>
+    /// The NispPeer class provides a convenient wrapper around <see cref="NispSender"/> and <see cref="NispReceiver"/>, managing the connection lifecycle for both components simultaneously.
+    /// </remarks>
     public class NispPeer : IAsyncDisposable
     {
-        private readonly NispClient _client;
+        private Task? _imAliveTask;
+        private CancellationTokenSource? _ctsForImAlive;
+
+        private readonly NispSender _sender;
         private readonly NispReceiver _receiver;
+        private readonly Guid _id;
+        private readonly ImAliveConfig? _imAliveConfig;
+        private readonly ILogger? _logger;
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="NispPeer"/> with specified client and receiver components.
+        /// Initializes a new instance of the <see cref="NispPeer"/> class.
         /// </summary>
-        /// <param name="client">Configured client instance for outgoing connections.</param>
-        /// <param name="receiver">Configured receiver instance for incoming connections.</param>
-        /// <exception cref="ArgumentNullException">Thrown if client or listener is null.</exception>
-        public NispPeer(NispClient client, NispReceiver receiver)
+        /// <param name="client">The configured sender component for outgoing messages.</param>
+        /// <param name="receiver">The configured receiver component for incoming messages.</param>
+        /// <param name="imAliveConfig">Optional configuration for automatic heartbeat messages.</param>
+        /// <param name="loggerFactory">Optional logger factory for creating logging instances.</param>
+        public NispPeer(NispSender client, NispReceiver receiver, ImAliveConfig? imAliveConfig = null, ILoggerFactory? loggerFactory = null)
         {
-            _client = client;
+            _sender = client;
             _receiver = receiver;
+            _id = Guid.NewGuid();
+            _imAliveConfig = imAliveConfig;
+            _logger = loggerFactory?.CreateLogger<NispPeer>();
         }
 
         /// <summary>
-        /// Indicates whether the peer is currently connected to both client and receiver components.
+        /// Gets a value indicating whether both sender and receiver components are connected.
         /// </summary>
-        public bool IsConnected => _client.IsConnected && _receiver.IsConnected;
+        /// <value><c>true</c> if both the sender is connected and the receiver is listening; otherwise, <c>false</c>.</value>
+        public bool IsConnected => _sender.IsConnected && _receiver.IsConnected;
 
         /// <summary>
-        /// Establishes a bidirectional connection between the client and receiver components.
+        /// Gets the unique identifier of this peer instance.
         /// </summary>
-        /// <param name="delay">Delay between connection attempts in milliseconds.</param>
-        /// <param name="sendTimeout">Timeout for send operations in milliseconds.</param>
-        /// <param name="maxAttempts">Maximum number of connection attempts.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>
-        /// Task that represents the asynchronous operation. The task result contains <c>true</c> if both
-        /// connections were established successfully, <c>false</c> otherwise.
-        /// </returns>
+        /// <value>A <see cref="Guid"/> that uniquely identifies this peer across the network.</value>
         /// <remarks>
-        /// The method attempts to establish both connections in parallel. If either connection fails,
-        /// both will be retried according to the specified parameters.
+        /// This identifier is used in <see cref="ImAliveMessage"/> messages to allow remote peers to distinguish between different instances.
         /// </remarks>
-        public async Task ConnectAsync(int delay = 10000, int sendTimeout = 30000, int maxAttempts = 5, CancellationToken cancellationToken = default)
-        {
-            var tasks = new List<Task<bool>>() 
-            { 
-                _client.ConnectAsync(delay, sendTimeout, maxAttempts, cancellationToken), 
-                _receiver.ListenAsync(delay, maxAttempts, cancellationToken) 
-            };
+        public Guid Id => _id;
 
-            await Parallel.ForEachAsync(tasks, async (t, ct) =>
+        /// <summary>
+        /// Establishes connections for both sender and receiver components simultaneously.
+        /// </summary>
+        /// <param name="retryDelay">Delay between connection retry attempts in milliseconds. Default is 10000.</param>
+        /// <param name="sendTimeout">Send operation timeout for the sender in milliseconds. Default is 30000.</param>
+        /// <param name="retryAttempts">Maximum number of connection attempts. Default is 5.</param>
+        /// <param name="cancellationToken">Cancellation token for aborting the connection attempts.</param>
+        /// <returns><c>true</c> if both components connected successfully; otherwise, <c>false</c>.</returns>
+        public async Task<bool> ConnectAsync(int sendTimeout = 30000, int retryDelay = 10000, int retryAttempts = 5, CancellationToken cancellationToken = default)
+        {
+            var clientTask = _sender.ConnectAsync(sendTimeout, retryDelay, retryAttempts, cancellationToken);
+            var receiverTask = _receiver.ListenAsync(retryDelay, retryAttempts, cancellationToken);
+
+            await Task.WhenAll(clientTask, receiverTask).ConfigureAwait(false);
+
+            bool connected = clientTask.Result && receiverTask.Result;
+
+            if (connected)
             {
-                await t.ConfigureAwait(false);
-            });
+                _receiver.StartReceiving(cancellationToken);
+
+                if (_imAliveConfig != null && _imAliveConfig.DelayInMilliseconds > 0)
+                    StartImAliveLoop(cancellationToken);
+            }
+
+            return connected;
         }
 
         /// <summary>
-        /// Sends a message through the client connection.
+        /// Sends a message to the remote peer through the sender component.
         /// </summary>
-        /// <typeparam name="TMessage">Type of the message to send.</typeparam>
-        /// <param name="message">Message payload to send.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>Task representing the asynchronous send operation.</returns>
+        /// <typeparam name="TMessage">The type of message to send.</typeparam>
+        /// <param name="message">The message instance to send.</param>
+        /// <param name="cancellationToken">Cancellation token for aborting the send operation.</param>
+        /// <returns>A task representing the asynchronous send operation.</returns>
+        /// <exception cref="InvalidOperationException">Thrown when the sender is not connected.</exception>
+        /// <exception cref="ArgumentNullException">Thrown when the message is null.</exception>
         public async Task SendAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)
         {
-            await _client.SendAsync(message, cancellationToken).ConfigureAwait(false);
+            await _sender.SendAsync(message, cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
-        /// Receives messages from the listener connection as an asynchronous enumerable.
+        /// Returns an asynchronous enumerable that yields messages of the specified type from the receiver.
         /// </summary>
-        /// <typeparam name="TMessage">Type of messages to receive.</typeparam>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>
-        /// Asynchronous enumerable of received messages. The enumeration will complete when
-        /// the connection is closed or an error occurs.
-        /// </returns>
+        /// <typeparam name="TMessage">The type of messages to receive.</typeparam>
+        /// <param name="cancellationToken">Cancellation token for stopping the enumeration.</param>
+        /// <returns>An asynchronous enumerable of messages of type <typeparamref name="TMessage"/>.</returns>
+        /// <exception cref="InvalidOperationException">Thrown when the receive loop is not running.</exception>
         public IAsyncEnumerable<TMessage> ReceiveAsync<TMessage>(CancellationToken cancellationToken = default)
         {
             return _receiver.ReceiveAsync<TMessage>(cancellationToken);
         }
 
         /// <summary>
-        /// Gracefully stops both client and listener connections.
+        /// Gracefully closes both sender and receiver connections, stopping all background tasks.
         /// </summary>
-        public async Task StopAsync()
+        /// <returns>A task representing the asynchronous close operation.</returns>
+        public async Task CloseConnectionsAsync()
         {
-            var clientTask = _client.StopAsync().AsTask();
+            if (_imAliveTask != null && _ctsForImAlive != null)
+            {
+                await _ctsForImAlive.CancelAsync();
+
+                try
+                {
+                    await _imAliveTask;
+                }
+                catch (OperationCanceledException) { }
+
+                _ctsForImAlive.Dispose();
+                _ctsForImAlive = null;
+                _imAliveTask = null;
+            }
+
+            var clientTask = _sender.StopAsync().AsTask();
             var receiverTask = _receiver.StopAsync().AsTask();
 
             await Task.WhenAll(clientTask, receiverTask);
         }
 
         /// <summary>
-        /// Disposes of both client and listener resources asynchronously.
+        /// Disposes the peer asynchronously, releasing all resources.
         /// </summary>
+        /// <returns>A value task representing the asynchronous dispose operation.</returns>
         public async ValueTask DisposeAsync()
         {
-            await _client.DisposeAsync().ConfigureAwait(false);
+            await _sender.DisposeAsync().ConfigureAwait(false);
             await _receiver.DisposeAsync().ConfigureAwait(false);
             GC.SuppressFinalize(this);
+        }
+
+        private void StartImAliveLoop(CancellationToken cancellationToken)
+        {
+            _logger?.LogInformation("Sending ImAlive messages is enabled");
+
+            _ctsForImAlive = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _imAliveTask = Task.Run(async () =>
+            {
+                while (!_ctsForImAlive.IsCancellationRequested && IsConnected)
+                {
+                    try
+                    {
+                        var msg = new ImAliveMessage
+                        {
+                            Id = _id,
+                            DateTime = DateTime.UtcNow
+                        };
+
+                        await _sender.SendAsync(msg, _ctsForImAlive.Token);
+                    }
+                    catch (OperationCanceledException) { continue; }
+                    catch (Exception) { throw; }
+
+                    await Task.Delay(_imAliveConfig!.DelayInMilliseconds, _ctsForImAlive.Token);
+                }
+            }, _ctsForImAlive.Token);
         }
     }
 }

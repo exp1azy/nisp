@@ -1,7 +1,7 @@
 ﻿using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 
-namespace Nisp.Core.Components
+namespace Nisp.Core.Entities
 {
     /// <summary>
     /// Represents SSL/TLS configuration options.

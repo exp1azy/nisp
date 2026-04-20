@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Nisp.Core;
+using Nisp.Core.Entities;
 using Nisp.Test.Shared;
 using System.Text;
 
@@ -9,13 +10,15 @@ namespace Nisp.Test.Client
     {
         static async Task Main(string[] args)
         {
-            const string host = "localhost";
+            const string host = "127.0.0.1";
             const int port = 7777;
 
-            var service = new NispService();
-            service.WithLogging(builder => builder.AddConsole());
+            var service = new NispService()
+                .WithMessageTypes((1, typeof(UserMessage)))
+                .WithLogging(builder => builder.AddConsole())
+                .WithCompression(b => b.UseLZ4());
 
-            var client = service.CreateClient(host, port);
+            var client = service.CreateSender(host, port);
             await client.ConnectAsync();
 
             for (int i = 0; i < 20; i++)
@@ -29,6 +32,12 @@ namespace Nisp.Test.Client
                     MessageBytes = Encoding.UTF8.GetBytes(message),
                     RandomNumber = Random.Shared.Next(),
                     Time = DateTime.Now
+                });
+
+                await client.SendAsync(new ImAliveMessage
+                {
+                    Id = Guid.NewGuid(),
+                    DateTime = DateTime.Now
                 });
             }
 

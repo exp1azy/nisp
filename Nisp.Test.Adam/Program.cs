@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Nisp.Core;
-using Nisp.Core.Components;
+using Nisp.Core.Entities;
 using Nisp.Test.Shared;
 
 namespace Nisp.Test.Adam
@@ -10,25 +10,42 @@ namespace Nisp.Test.Adam
         static async Task Main(string[] args)
         {
             var service = new NispService()
-                .WithCompression()
-                .WithLogging(builder => builder.AddConsole());
+                .WithMessageTypes((1, typeof(UserMessage)))
+                .WithCompression(f => f.UseSnappier())
+                .WithLogging(b => b.AddConsole());
 
-            var peer = service.CreateBidirectional(new PeerConfig
+            var peer = service.CreatePeer(new PeerConfig
             {
-                ClientHost = "localhost",
-                ClientPort = 5001,
-                ListenerHost = "localhost",
-                ListenerPort = 5000
+                SenderEndpoint = ("127.0.0.1", 5001),
+                ReceiverEndpoint = ("127.0.0.1", 5000),
+                ImAliveConfig = new ImAliveConfig
+                {
+                    DelayInMilliseconds = 5000
+                }
             });
 
             await peer.ConnectAsync();
+            await peer.SendAsync(new UserMessage { Message = "Hello Eve" });
 
-            await peer.SendAsync(new UserMessage { Message = "Ping" });
-            await foreach (var message in peer.ReceiveAsync<UserMessage>())
+            var t1 = Task.Run(async () =>
             {
-                Console.WriteLine($"\nReceived message from Eve: {message.Message}\n");
-                await peer.SendAsync(new UserMessage { Message = "Ping" });
-            }
+                await foreach (var message in peer.ReceiveAsync<UserMessage>())
+                {
+                    Console.WriteLine($"\nReceived message from Eve: {message.Message}\n");
+                    await peer.SendAsync(new UserMessage { Message = "Hello Eve" });
+                }
+            });
+
+            var t2 = Task.Run(async () =>
+            {
+                await foreach (var message in peer.ReceiveAsync<ImAliveMessage>())
+                {
+                    Console.WriteLine($"Eve is alive");
+                }
+            });
+
+            await Task.WhenAll(t1, t2);
+            await peer.CloseConnectionsAsync();
         }
     }
 }

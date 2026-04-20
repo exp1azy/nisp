@@ -1,4 +1,6 @@
-﻿using Nisp.Core;
+﻿using Microsoft.Extensions.Logging;
+using Nisp.Core;
+using Nisp.Core.Entities;
 using Nisp.Test.Shared;
 
 namespace Nisp.Test.Server
@@ -7,19 +9,36 @@ namespace Nisp.Test.Server
     {
         static async Task Main(string[] args)
         {
-            const string host = "localhost";
+            const string host = "127.0.0.1";
             const int port = 7777;
 
-            var service = new NispService();
-            var listener = service.CreateReceiver(host, port);
-            await listener.ListenAsync();
+            var service = new NispService()
+                .WithMessageTypes((1, typeof(UserMessage)))
+                .WithCompression(b => b.UseLZ4())
+                .WithLogging(builder => builder.AddConsole());
 
-            await foreach (var message in listener.ReceiveAsync<UserMessage>())
+            var receiver = service.CreateReceiver(host, port);
+            await receiver.ListenAsync();
+            receiver.StartReceiving();
+
+            var t1 = Task.Run(async () =>
             {
-                Console.WriteLine($"Received: {message.Message}");
-            }
+                await foreach (var message in receiver.ReceiveAsync<UserMessage>())
+                {
+                    Console.WriteLine($"Received: {message.Message}");
+                }
+            });
 
-            await listener.StopAsync();
+            var t2 = Task.Run(async () =>
+            {
+                await foreach (var message in receiver.ReceiveAsync<ImAliveMessage>())
+                {
+                    Console.WriteLine($"Received: {message.Id}");
+                }
+            });
+
+            await Task.WhenAll(t1, t2);
+            await receiver.StopAsync();
         }
     }
 }

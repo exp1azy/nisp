@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
@@ -29,12 +29,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="EasyCompressor.LZ4" Version="2.1.0" />
+    <PackageReference Include="EasyCompressor.Snappier" Version="2.1.0" />
     <PackageReference Include="EasyCompressor.ZstdSharp" Version="2.1.0" />
     <PackageReference Include="MemoryPack" Version="1.21.4" />
-    <PackageReference Include="MessagePack" Version="3.1.4" />
-    <PackageReference Include="MessagePack.Attributeless" Version="1.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.3" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.6" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.6" />
   </ItemGroup>
 
 </Project>
