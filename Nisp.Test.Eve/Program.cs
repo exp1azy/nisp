@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Nisp.Core;
 using Nisp.Core.Entities;
+using Nisp.Core.Messages;
 using Nisp.Test.Shared;
 
 namespace Nisp.Test.Eve
@@ -25,6 +26,7 @@ namespace Nisp.Test.Eve
             });
 
             await peer.ConnectAsync();
+            peer.StartReceiving(ReceiveErrorBehavior.Ignore);
 
             var t1 = Task.Run(async () =>
             {

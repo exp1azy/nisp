@@ -123,7 +123,8 @@ namespace Nisp.Core
             return new NispPeer(
                 new NispSender(clientAddress, config.SenderEndpoint.Port, _compressor, config.SenderSslOptions, _messageTypes, _loggerFactory),
                 new NispReceiver(receiverAddress, config.ReceiverEndpoint.Port, _compressor, config.ReceiverSslOptions, _messageTypes, _loggerFactory),
-                config.ImAliveConfig
+                config.ImAliveConfig,
+                config.Acknowledge
             );
         }
     }

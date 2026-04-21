@@ -11,7 +11,6 @@ using System.Runtime.CompilerServices;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Channels;
-using ZstdSharp;
 
 namespace Nisp.Core.Components
 {
@@ -27,11 +26,8 @@ namespace Nisp.Core.Components
         private Task? _receiveLoopTask;
         private bool _isReceiving;
 
-        private readonly ICompressor? _compressor;
         private readonly ILogger<NispReceiver>? _logger;
-        private readonly SslOptions? _encryptionOptions;
         private readonly ConcurrentDictionary<Type, Channel<object>> _channels;
-        private readonly List<(ushort Id, Type Type)> _messageTypes;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="NispReceiver"/> class.
@@ -43,39 +39,11 @@ namespace Nisp.Core.Components
         /// <param name="messageTypes">Optional list of message type registrations with their unique identifiers.</param>
         /// <param name="loggerFactory">Optional logger factory for creating logging instances.</param>
         public NispReceiver(IPAddress address, int port, ICompressor? compressor = null, SslOptions? encryptionOptions = null, List<(ushort Id, Type Type)>? messageTypes = null, ILoggerFactory? loggerFactory = null)
+            : base(address, port, compressor, encryptionOptions, messageTypes)
         {
-            IPAddress = address;
-            Port = port;
-
-            _compressor = compressor;
-            _encryptionOptions = encryptionOptions;
             _logger = loggerFactory?.CreateLogger<NispReceiver>();
             _channels = [];
-
-            if (messageTypes == null)
-            {
-                _messageTypes = [(1, typeof(ImAliveMessage))];
-            }
-            else
-            {
-                _messageTypes = messageTypes;
-                if (!_messageTypes.Exists(t => t.Type == typeof(ImAliveMessage)))
-                {
-                    int maxTag = _messageTypes.Max(t => t.Id);
-                    _messageTypes.Add(((ushort Id, Type Type))(maxTag + 1, typeof(ImAliveMessage)));
-                }
-            }
         }
-
-        /// <summary>
-        /// Gets the IP address this receiver is listening on.
-        /// </summary>
-        public override IPAddress IPAddress { get; }
-
-        /// <summary>
-        /// Gets the port number this receiver is listening on.
-        /// </summary>
-        public override int Port { get; }
 
         /// <summary>
         /// Gets a value indicating whether the receiver is currently connected to a client.
@@ -101,11 +69,11 @@ namespace Nisp.Core.Components
         {
             if (IsConnected)
             {
-                _logger?.LogError("The listener could not be started because it is already connected to {Host}:{Port}", IPAddress, Port);
-                throw new InvalidOperationException($"The listener could not be started because it is already connected to {IPAddress}:{Port}");
+                _logger?.LogError("The receiver could not be started because it is already connected to {Host}:{Port}", IPAddress, Port);
+                throw new InvalidOperationException($"The receiver could not be started because it is already connected to {IPAddress}:{Port}");
             }
 
-            _logger?.LogInformation("The listener has started connecting to {Host}:{Port}...", IPAddress, Port);
+            _logger?.LogInformation("The receiver has started connecting to {Host}:{Port}...", IPAddress, Port);
 
             bool successfullyConnected = false;
             int attempt = 0;
@@ -126,7 +94,7 @@ namespace Nisp.Core.Components
 
                     _stream = _client!.GetStream();
 
-                    if (_encryptionOptions != null)
+                    if (SslOptions != null)
                     {
                         var sslStream = new SslStream(
                             _stream!,
@@ -135,16 +103,16 @@ namespace Nisp.Core.Components
 
                         var sslOptions = new SslServerAuthenticationOptions
                         {
-                            ServerCertificate = _encryptionOptions.Certificate,
-                            ClientCertificateRequired = _encryptionOptions.ClientCertificateRequired,
+                            ServerCertificate = SslOptions.Certificate,
+                            ClientCertificateRequired = SslOptions.ClientCertificateRequired,
                             EnabledSslProtocols = SslProtocols.None,
-                            CertificateRevocationCheckMode = _encryptionOptions.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck,
+                            CertificateRevocationCheckMode = SslOptions.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck,
                             RemoteCertificateValidationCallback = (s, cert, ch, errors) =>
                             {
-                                if (_encryptionOptions.RemoteCertificateValidationCallback == null)
+                                if (SslOptions.RemoteCertificateValidationCallback == null)
                                     return ValidateCertificate(s, cert, ch, errors);
 
-                                return _encryptionOptions.RemoteCertificateValidationCallback(s, cert, ch, errors);
+                                return SslOptions.RemoteCertificateValidationCallback(s, cert, ch, errors);
                             }  
                         };
 
@@ -156,12 +124,12 @@ namespace Nisp.Core.Components
                 }
                 catch (OperationCanceledException)
                 {
-                    _logger?.LogInformation("The server has stopped listening on {Host}:{Port}", IPAddress, Port);
+                    _logger?.LogInformation("The receiver has stopped listening on {Host}:{Port}", IPAddress, Port);
                     return successfullyConnected;
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogWarning(ex, "Failed to connect the listener to {Host}:{Port}, next attempt after {Delay} ms", IPAddress, Port, retryDelay);
+                    _logger?.LogWarning(ex, "Failed to connect the receiver to {Host}:{Port}, next attempt after {Delay} ms", IPAddress, Port, retryDelay);
 
                     _stream = null;
                     _client = null;
@@ -177,9 +145,9 @@ namespace Nisp.Core.Components
             }
 
             if (successfullyConnected)
-                _logger?.LogInformation("The server has successfully started listening on {Host}:{Port}", IPAddress, Port);
+                _logger?.LogInformation("The receiver has successfully started listening on {Host}:{Port}", IPAddress, Port);
             else
-                _logger?.LogError("The server failed to start listening on {Host}:{Port}", IPAddress, Port);
+                _logger?.LogError("The receiver failed to start listening on {Host}:{Port}", IPAddress, Port);
 
             return successfullyConnected;
         }
@@ -187,9 +155,10 @@ namespace Nisp.Core.Components
         /// <summary>
         /// Starts the background receive loop that processes incoming messages.
         /// </summary>
+        /// <param name="receiveErrorBehavior"></param>
         /// <param name="cancellationToken">Cancellation token for stopping the receive loop.</param>
         /// <exception cref="InvalidOperationException">Thrown when the receiver is not connected or the receive loop is already running.</exception>
-        public void StartReceiving(CancellationToken cancellationToken = default)
+        public void StartReceiving(ReceiveErrorBehavior receiveErrorBehavior = ReceiveErrorBehavior.StopAndThrow, CancellationToken cancellationToken = default)
         {
             if (!IsConnected)
             {
@@ -205,7 +174,7 @@ namespace Nisp.Core.Components
 
             _receiveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _isReceiving = true;
-            _receiveLoopTask = Task.Run(() => ReceiveLoopAsync(_receiveCts.Token), cancellationToken);
+            _receiveLoopTask = Task.Run(() => ReceiveLoopAsync(receiveErrorBehavior, _receiveCts.Token), cancellationToken);
 
             _logger?.LogInformation("Started receiving messages on {Host}:{Port}", IPAddress, Port);
         }
@@ -222,7 +191,7 @@ namespace Nisp.Core.Components
             _logger?.LogInformation("Stopping receive loop on {Host}:{Port}", IPAddress, Port);
 
             if (_receiveCts != null)
-                await _receiveCts.CancelAsync();
+                await _receiveCts.CancelAsync().ConfigureAwait(false);
 
             if (_receiveLoopTask != null)
             {
@@ -257,13 +226,12 @@ namespace Nisp.Core.Components
                 throw new InvalidOperationException("Receive loop is not running.");
             }
 
-            var channel = _channels.GetOrAdd(typeof(TMessage), _ =>
-                Channel.CreateUnbounded<object>(new UnboundedChannelOptions
-                {
-                    SingleReader = false,
-                    SingleWriter = true,
-                    AllowSynchronousContinuations = false
-                }));
+            var channel = _channels.GetOrAdd(typeof(TMessage), _ => Channel.CreateUnbounded<object>(new UnboundedChannelOptions
+            {
+                SingleReader = false,
+                SingleWriter = true,
+                AllowSynchronousContinuations = false
+            }));
 
             await foreach (var message in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
@@ -317,12 +285,12 @@ namespace Nisp.Core.Components
             GC.SuppressFinalize(this);
         }
 
-        private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
+        private async Task ReceiveLoopAsync(ReceiveErrorBehavior receiveErrorBehavior, CancellationToken cancellationToken)
         {
             if (!IsConnected)
             {
-                _logger?.LogError("It was not possible to start receiving messages because the server is not listening to {Host}:{Port}", IPAddress, Port);
-                throw new InvalidOperationException($"It was not possible to start receiving messages because the server is not listening to {IPAddress}:{Port}");
+                _logger?.LogError("Can not to start receiving messages because the receiver is not listening to {Host}:{Port}", IPAddress, Port);
+                throw new InvalidOperationException($"Can not to start receiving messages because the receiver is not listening to {IPAddress}:{Port}");
             }
 
             while (!cancellationToken.IsCancellationRequested && IsConnected)
@@ -344,12 +312,18 @@ namespace Nisp.Core.Components
                     {
                         try
                         {
-                            data = _compressor!.Decompress(payloadBuffer);
+                            data = Compressor!.Decompress(payloadBuffer);
                         }
-                        catch (ZstdException ex)
+                        catch (Exception ex)
                         {
                             _logger?.LogError(ex, "Failed to decompress message from {Host}:{Port}", IPAddress, Port);
-                            break;
+
+                            if (receiveErrorBehavior == ReceiveErrorBehavior.Ignore)
+                                continue;
+                            else if (receiveErrorBehavior == ReceiveErrorBehavior.Stop)
+                                break;
+                            else
+                                throw new FormatException($"Failed to decompress message from {IPAddress}:{Port}", ex);
                         }
                     }
                     else
@@ -357,39 +331,49 @@ namespace Nisp.Core.Components
                         data = payloadBuffer;
                     }
 
-                    var messageType = _messageTypes.FirstOrDefault(t => t.Id == typeId).Type;
+                    var messageType = MessageTypes.FirstOrDefault(t => t.Id == typeId).Type;
                     var message = MemoryPackSerializer.Deserialize(messageType, data);
 
                     if (message == null)
                     {
-                        _logger?.LogWarning("Deserialization returned null for message from {Host}:{Port}", IPAddress, Port);
-                        continue;
+                        _logger?.LogWarning("Deserialization returned null for message of <{Type}> type from {Host}:{Port}", messageType, IPAddress, Port);
+
+                        if (receiveErrorBehavior == ReceiveErrorBehavior.Ignore)
+                            continue;
+                        else if (receiveErrorBehavior == ReceiveErrorBehavior.Stop)
+                            break;
+                        else
+                            throw new NullReferenceException($"Deserialization returned null for message of <{messageType}> type from {IPAddress}:{Port}");
                     }
 
-                    var channel = _channels.GetOrAdd(messageType, _ =>
-                        Channel.CreateUnbounded<object>(new UnboundedChannelOptions
-                        {
-                            SingleReader = false,
-                            SingleWriter = true,
-                            AllowSynchronousContinuations = false
-                        }));
+                    var channel = _channels.GetOrAdd(messageType, _ => Channel.CreateUnbounded<object>(new UnboundedChannelOptions
+                    {
+                        SingleReader = false,
+                        SingleWriter = true,
+                        AllowSynchronousContinuations = false
+                    }));
 
                     await channel.Writer.WriteAsync(message, cancellationToken);
                     _logger?.LogInformation("Received message of type {Type} from {Host}:{Port}", message.GetType().Name, IPAddress, Port);
                 }
                 catch (EndOfStreamException)
                 {
-                    _logger?.LogInformation("All messages from client have been read.");
+                    _logger?.LogInformation("All messages from sender have been read.");
                     break;
                 }
                 catch (OperationCanceledException)
                 {
-                    _logger?.LogInformation("The server has stopped receiving messages from {Host}:{Port}", IPAddress, Port);
+                    _logger?.LogInformation("The receiver has stopped receiving messages from {Host}:{Port}", IPAddress, Port);
                     break;
                 }
                 catch (Exception ex)
                 {
                     _logger?.LogError(ex, "An error occurred while trying to receive a message");
+
+                    if (receiveErrorBehavior == ReceiveErrorBehavior.Stop)
+                        break;
+                    else if (receiveErrorBehavior == ReceiveErrorBehavior.StopAndThrow)
+                        throw;
                 }
             }
 

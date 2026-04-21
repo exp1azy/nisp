@@ -7,13 +7,13 @@ namespace Nisp.Core.Compressors
     /// </summary>
     public class CompressorFactory : ICompressorFactory
     {
-        // <inheritdoc/>
+        /// <inheritdoc/>
         public ICompressor UseZstdSharp() => new ZstdSharpCompressor();
 
-        // <inheritdoc/>
+        /// <inheritdoc/>
         public ICompressor UseLZ4() => new LZ4Compressor();
 
-        // <inheritdoc/>
+        /// <inheritdoc/>
         public ICompressor UseSnappier() => new SnappierCompressor();
     }
 }

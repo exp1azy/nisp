@@ -1,6 +1,6 @@
 ﻿using MemoryPack;
 
-namespace Nisp.Core.Entities
+namespace Nisp.Core.Messages
 {
     /// <summary>
     /// Represents a heartbeat message sent between peers to indicate that a service is still alive and responsive.

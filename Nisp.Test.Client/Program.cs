@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Nisp.Core;
-using Nisp.Core.Entities;
+using Nisp.Core.Messages;
 using Nisp.Test.Shared;
 using System.Text;
 

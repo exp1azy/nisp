@@ -19,10 +19,7 @@ namespace Nisp.Core.Components
         private TcpClient? _client;
         private Stream? _stream;
 
-        private readonly ICompressor? _compressor;
-        private readonly ILogger<NispSender>? _logger;    
-        private readonly SslOptions? _encryptionOptions;
-        private readonly List<(ushort Id, Type Type)> _messageTypes;
+        private readonly ILogger<NispSender>? _logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="NispSender"/> class.
@@ -34,38 +31,10 @@ namespace Nisp.Core.Components
         /// <param name="messageTypes">Optional list of message type registrations with their unique identifiers.</param>
         /// <param name="loggerFactory">Optional logger factory for creating logging instances.</param>
         public NispSender(IPAddress address, int port, ICompressor? compressor = null, SslOptions? encryptionOptions = null, List<(ushort Id, Type Type)>? messageTypes = null, ILoggerFactory? loggerFactory = null)
+            : base(address, port, compressor, encryptionOptions, messageTypes)
         {
-            IPAddress = address;
-            Port = port;
-
-            _compressor = compressor;
-            _encryptionOptions = encryptionOptions;
             _logger = loggerFactory?.CreateLogger<NispSender>();
-
-            if (messageTypes == null)
-            {
-                _messageTypes = [(1, typeof(ImAliveMessage))];
-            }
-            else
-            {
-                _messageTypes = messageTypes;
-                if (!_messageTypes.Exists(t => t.Type == typeof(ImAliveMessage)))
-                {
-                    int maxTag = _messageTypes.Max(t => t.Id);
-                    _messageTypes.Add(((ushort Id, Type Type))(maxTag + 1, typeof(ImAliveMessage)));
-                }
-            }
         }
-
-        /// <summary>
-        /// Gets the target IP address this sender is configured to connect to.
-        /// </summary>
-        public override IPAddress IPAddress { get; }
-
-        /// <summary>
-        /// Gets the target port number this sender is configured to connect to.
-        /// </summary>
-        public override int Port { get; }
 
         /// <summary>
         /// Gets a value indicating whether the sender is currently connected to the remote endpoint.
@@ -111,7 +80,7 @@ namespace Nisp.Core.Components
                     await _client.ConnectAsync(endpoint, cancellationToken).ConfigureAwait(false);
                     _stream = _client.GetStream();
 
-                    if (_encryptionOptions != null)
+                    if (SslOptions != null)
                     {
                         var sslStream = new SslStream(
                             _stream!,
@@ -121,15 +90,15 @@ namespace Nisp.Core.Components
                         var options = new SslClientAuthenticationOptions
                         {
                             TargetHost = IPAddress.ToString(),
-                            CertificateRevocationCheckMode = _encryptionOptions.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck,
+                            CertificateRevocationCheckMode = SslOptions.CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck,
                             EnabledSslProtocols = SslProtocols.None,
-                            ClientCertificates = [_encryptionOptions.Certificate],
+                            ClientCertificates = [SslOptions.Certificate],
                             RemoteCertificateValidationCallback = (s, cert, ch, errors) =>
                             {
-                                if (_encryptionOptions.RemoteCertificateValidationCallback == null)
+                                if (SslOptions.RemoteCertificateValidationCallback == null)
                                     return ValidateCertificate(s, cert, ch, errors);
 
-                                return _encryptionOptions.RemoteCertificateValidationCallback(s, cert, ch, errors);
+                                return SslOptions.RemoteCertificateValidationCallback(s, cert, ch, errors);
                             }
                         };
 
@@ -190,13 +159,13 @@ namespace Nisp.Core.Components
             {
                 byte[] serialized = MemoryPackSerializer.Serialize(message);
 
-                bool isCompressed = _compressor != null;
-                var payload = isCompressed ? _compressor!.Compress(serialized) : serialized;
+                bool isCompressed = Compressor != null;
+                var payload = isCompressed ? Compressor!.Compress(serialized) : serialized;
 
                 var packet = new byte[1 + sizeof(ushort) + sizeof(int) + payload.Length];
                 packet[0] = isCompressed ? (byte)0x01 : (byte)0x00;
 
-                ushort typeId = _messageTypes.First(t => t.Type == typeof(TMessage)).Id;
+                ushort typeId = MessageTypes.First(t => t.Type == typeof(TMessage)).Id;
 
                 BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(1, 2), typeId);
                 BinaryPrimitives.WriteInt32LittleEndian(packet.AsSpan(3, 4), payload.Length);

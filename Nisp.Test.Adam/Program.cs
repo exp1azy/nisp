@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Nisp.Core;
 using Nisp.Core.Entities;
+using Nisp.Core.Messages;
 using Nisp.Test.Shared;
 
 namespace Nisp.Test.Adam
@@ -21,10 +22,12 @@ namespace Nisp.Test.Adam
                 ImAliveConfig = new ImAliveConfig
                 {
                     DelayInMilliseconds = 5000
-                }
+                },
+                Acknowledge = true
             });
 
             await peer.ConnectAsync();
+            peer.StartReceiving(ReceiveErrorBehavior.Ignore);
             await peer.SendAsync(new UserMessage { Message = "Hello Eve" });
 
             var t1 = Task.Run(async () =>

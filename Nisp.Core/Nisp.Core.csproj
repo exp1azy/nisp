@@ -6,15 +6,16 @@
     <Nullable>enable</Nullable>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Title>Nisp.Core</Title>
-    <Version>1.0.0</Version>
+    <Version>2.0.0</Version>
     <Authors>exp1azy</Authors>
     <Company>exp1azy</Company>
     <Description>NISP is a high-performance communication protocol designed specifically for .NET inter-service communication. It provides fast, efficient serialization and transmission of .NET objects between services with minimal overhead.</Description>
     <PackageProjectUrl>https://github.com/exp1azy/nisp</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/exp1azy/nisp</RepositoryUrl>
-    <PackageTags>microservice;service;communication;bidirectional;sending;receiving;high-perfomance;full-duplex;protocol;client;listener;peer;LZ4;ZLogger;MemoryPack;SSL;TLS;TCP</PackageTags>
+    <PackageTags>microservice;service;sending;receiving;protocol;client;listener;sender;receiver;peer;ssl;tls;tcp</PackageTags>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+	<GenerateDocumentationFile>True</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>

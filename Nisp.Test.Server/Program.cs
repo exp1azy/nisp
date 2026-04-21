@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Nisp.Core;
 using Nisp.Core.Entities;
+using Nisp.Core.Messages;
 using Nisp.Test.Shared;
 
 namespace Nisp.Test.Server
@@ -19,7 +20,7 @@ namespace Nisp.Test.Server
 
             var receiver = service.CreateReceiver(host, port);
             await receiver.ListenAsync();
-            receiver.StartReceiving();
+            receiver.StartReceiving(ReceiveErrorBehavior.Ignore);
 
             var t1 = Task.Run(async () =>
             {

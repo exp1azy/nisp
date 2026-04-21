@@ -33,6 +33,15 @@
         public ImAliveConfig? ImAliveConfig { get; set; }
 
         /// <summary>
+        /// Gets or sets a value indicating whether message acknowledgment is enabled for this peer.
+        /// </summary>
+        /// <value><c>true</c> if acknowledgment messages should be sent for every received message; otherwise, <c>false</c>.</value>
+        /// <remarks>
+        /// When enabled, the peer will automatically send an <see cref="Messages.AckMessage"/> back to the sender peer for every successfully received message.
+        /// </remarks>
+        public bool Acknowledge { get; set; }
+
+        /// <summary>
         /// Gets or sets the SSL/TLS configuration for the outgoing sender connection.
         /// </summary>
         /// <value>An <see cref="SslOptions"/> instance, or <c>null</c> if SSL/TLS is disabled for sender connections.</value>
